@@ -45,6 +45,10 @@
     ];
     this.bound = (typeof this.options.bound === 'string') ? this[this.options.bound + "Bound"]
       : this.options.bound;
+    this.viewportWidth = viewportWidth;
+    this.viewportHeight = viewportHeight;
+    this.elWidth = elWidth;
+    this.elHeight = elHeight;
   };
 
   Panel.prototype.isMoved = function () {
@@ -341,7 +345,7 @@
   };
 
   Panel.prototype.scrollbar = function (time) {
-    var y = - this.y / this.el.height() * this.bar.height();
+    var y = - this.y / this.elHeight * this.viewportHeight;
     this.indicator.anim({translate3d: '0, ' + y + 'px, 0'}, time, 'cubic-bezier(0.33,0.66,0.66,1)');
   };
 
