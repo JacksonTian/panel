@@ -101,10 +101,11 @@
       return;
     }
     if (["SELECT", "INPUT", "TEXTAREA"].indexOf(event.target.tagName) === -1) {
-      this.direction = '';
+      this.startTime = Date.now();
       this.pageX = event.pageX;
       this.pageY = event.pageY;
       this._bound();
+      this.direction = Math.abs(event.offsetX) > Math.abs(event.offsetY) ? 'h' : 'v';
       var that = this;
       this.el.bind(MOVE_EV, function (event) {
         that._move(event);
@@ -113,6 +114,42 @@
         that._end(event);
       });
     }
+
+    // Create the scrollbar wrapper
+    var bar = $('<div></div>');
+
+    bar.css({
+      'position': 'absolute',
+      'z-index': 100,
+      'width': 7,
+      'bottom': 2,
+      'top': 2,
+      'right': 1,
+      'pointer-events': 'none',
+      '-webkit-transition-property': 'opacity',
+      '-webkit-transition-duration': '350ms',
+      'overflow': 'hidden',
+      'opacity': '1'
+    });
+    this.viewport.append(bar);
+    // Create the scrollbar indicator
+    var indicator = $('<div></div>');
+    indicator.css({
+      'position': 'absolute',
+      'z-index': 100,
+      'background-color': 'rgba(0,0,0,0.5)',
+      'border': '1px solid rgba(255,255,255,0.9)',
+      '-webkit-background-clip': 'padding-box',
+      'box-sizing': 'border-box',
+      'width': '100%',
+      'border-radius': '3px',
+      'pointer-events': 'none',
+      '-webkit-transition-property': '-webkit-transform',
+      '-webkit-transition-timing-function': 'cubic-bezier(0.33,0.66,0.66,1)',
+      '-webkit-transition-duration': '0',
+      '-webkit-transform': 'translate(0, 0, 0)'
+    });
+    bar.appendChild(indicator);
   };
 
   Panel.prototype._move = function (event) {
@@ -128,13 +165,10 @@
     this.pageX = event.pageX;
     this.pageY = event.pageY;
     // 做方向判定
-    if (!this.direction) {
-      this.direction = Math.abs(deltaX) > Math.abs(deltaY) ? 'h' : 'v';
-      if (this.direction === 'h') {
-        deltaY = 0;
-      } else {
-        deltaX = 0;
-      }
+    if (this.direction === 'h') {
+      deltaY = 0;
+    } else {
+      deltaX = 0;
     }
 
     // 是否冒泡给父元素
@@ -153,13 +187,60 @@
     this._pos(deltaX, deltaY);
   };
 
-  Panel.prototype._end = function () {
+  Panel.prototype._end = function (event) {
     var that = this;
     this.status = 'free';
     var x = this.x;
     var y = this.y;
-    this.direction = '';
     var options = this.options;
+    var deceled, time;
+    var speedX, speedY;
+    if (event.duration < 300) {
+      speedX = event.offsetX / event.duration;
+      speedY = event.offsetY / event.duration;
+      if (!this.options.vScroll) {
+        speedY = 0;
+      }
+      if (!this.options.hScroll) {
+        speedX = 0;
+      }
+      // 是否冒泡给父元素
+      if (!this.options.vScroll && this.direction === 'v') {
+        event.cancelBubble = false;
+      } else {
+        event.cancelBubble = true;
+      }
+      if (!this.options.hScroll && this.direction === 'h') {
+        event.cancelBubble = false;
+      } else {
+        event.cancelBubble = true;
+      }
+
+      var speed = Math.sqrt(speedX * speedX + speedY * speedY);
+      // 减速度
+      var deceleration = 0.0015;
+      time = speed / deceleration;
+      var distance = Math.pow(time, 2) * deceleration / 2;
+      var distance2 = Math.pow(distance, 2);
+
+      var distanceX, distanceY;
+
+      if (speedX === 0) {
+        distanceX = 0;
+        distanceY = distance;
+      } else if (speedY === 0) {
+        distanceX = distance;
+        distanceY = 0;
+      } else {
+        var tan2 = Math.pow(speedX / speedY, 2);
+        distanceX = Math.sqrt(tan2 * distance2 / (tan2 + 1));
+        distanceY = Math.sqrt(distance2 / (tan2 + 1));
+      }
+      deceled  = speed !== 0;
+      x += (speedX > 0 ? 1 : -1) * distanceX;
+      y += (speedY > 0 ? 1 : -1) * distanceY;
+    }
+
     // 每次触摸完成，重新计算下边界
     var bound = this.bound;
     if (this.options.snap) {
@@ -172,8 +253,14 @@
         var maxColumn = Math.ceil(this.el.width() / this.viewport.width());
         // 边界检查
         hColumn = Math.min(Math.max(-maxColumn + 1, hColumn), 0);
-        x = hColumn * this.snapWidth;
-        this.currPageX = -hColumn;
+        if (deceled) {
+          this.currPageX += (speedX > 0 ? -1 : 1);
+          this.currPageX = Math.min(Math.max(0, this.currPageX), maxColumn - 1);
+          x = this.currPageX * this.snapWidth * -1;
+        } else {
+          x = hColumn * this.snapWidth;
+          this.currPageX = -hColumn;
+        }
       }
       if (!options.hScroll) {
         this.currPageX = 0;
@@ -202,23 +289,37 @@
     }
     this.x = x;
     this.y = y;
+    this.direction = '';
     this.animating = true;
-    this.el.anim({translate3d: x + "px, " + y + "px, 0"}, 0.2, 'ease-in-out', function () {
+    time = !deceled ? 0.2 : 0.4;
+    this.el.anim({translate3d: x + "px, " + y + "px, 0"}, time, 'ease-in-out', function () {
       that.animating = true;
     });
+
     if (that.options.onScrollEnd) {
       that.options.onScrollEnd.call(that);
     }
+    this.el.unbind(MOVE_EV);
+    this.el.unbind(END_EV);
   };
 
   Panel.prototype._pos = function (deltaX, deltaY) {
     var x = this.x + deltaX;
     var y = this.y + deltaY;
     var options = this.options;
+    var bound = this.bound;
     if (options.bounce) {
-      var bound = this.bound;
       x = Math.max(Math.min(bound[1], x), bound[0]);
       y = Math.max(Math.min(bound[3], y), bound[2]);
+    } else {
+      // Slow down if outside of the boundaries
+      // 越界时做减速
+      if (x < bound[0] || x > bound[1]) {
+        x = this.x + deltaX / 2;
+      }
+      if (y < bound[2] || y > bound[3]) {
+        y = this.y + deltaY / 2;
+      }
     }
     if (!options.vScroll) {
       y = 0;
@@ -243,18 +344,25 @@
 
     if (typeof this.options.snap === "string") {
       this.currPageX = pageX === 'next' ? this.currPageX + 1 : pageX === 'prev' ? this.currPageX - 1 : pageX;
-      // that.currPageY = pageY === 'next' ? that.currPageY + 1 : pageY === 'prev' ? that.currPageY - 1 : pageY;
-      var snap = this.el.find(this.options.snap).width();
-      var x = this.currPageX * snap * -1;
-      // y = that.currPageX * snap;
-      this.el.anim({translate3d: x + "px, " + this.y + "px, 0"}, time, 'ease-in-out', function () {
+      that.currPageY = pageY === 'next' ? that.currPageY + 1 : pageY === 'prev' ? that.currPageY - 1 : pageY;
+      var x = this.currPageX * this.snapWidth * -1;
+      var y = that.currPageY * this.snapHeight * -1;
+      this.el.anim({translate3d: x + "px, " + y + "px, 0"}, time, 'ease-in-out', function () {
         that.animating = true;
       });
       this.x = x;
+      this.y = y;
       if (this.options.onScrollEnd) {
         this.options.onScrollEnd.call(this);
       }
     }
+  };
+
+  Panel.prototype.destroy = function () {
+    this.el.unbind();
+    this.el = null;
+    this.viewport = null;
+    this.snapEl = null;
   };
 
   root.Panel = Panel;
