@@ -20,6 +20,7 @@
       snap: false,
       vScroll: true,
       hScroll: true,
+      vScroller: false,
       // 如果为true，内容区域小于视窗区域时，不启用任何触屏效果
       auto: false,
       // 边界检查，设为true时，滑动不允许越出边界
@@ -69,6 +70,7 @@
 
   Panel.prototype.init = function () {
     var that = this;
+    this._bound();
     if (typeof this.options.snap === 'string') {
       this.snapEl = this.el.find(this.options.snap);
       this.snapWidth = this.snapEl.width();
@@ -78,7 +80,7 @@
     if (that.options.auto) {
       var el = this.el;
       var viewport = this.viewport;
-      if (el.width() <= viewport.width() && el.height <= viewport.width()) {
+      if (el.width() <= viewport.width() && el.height() <= viewport.height()) {
         return;
       }
     }
@@ -86,46 +88,48 @@
       that._start(event);
     });
 
-    // Create the scrollbar wrapper
-    var bar = $('<div></div>');
+    if (that.options.vScrollbar) {
+      // Create the scrollbar wrapper
+      var bar = $('<div></div>');
 
-    bar.css({
-      'position': 'absolute',
-      'z-index': 100,
-      'width': 7,
-      'bottom': 2,
-      'top': 2,
-      'right': 1,
-      'pointer-events': 'none',
-      '-webkit-transition-property': 'opacity',
-      '-webkit-transition-duration': '350ms',
-      'overflow': 'hidden',
-      'opacity': '1',
-      'border-radius': '4px'
-    });
-    this.viewport.append(bar);
-    // Create the scrollbar indicator
-    var indicator = $('<div></div>');
-    indicator.css({
-      'position': 'absolute',
-      'z-index': 100,
-      'background-color': 'rgba(0,0,0,0.5)',
-      'border': '1px solid rgba(255,255,255,0.9)',
-      '-webkit-background-clip': 'padding-box',
-      'box-sizing': 'border-box',
-      'width': '100%',
-      'border-radius': '3px',
-      'pointer-events': 'none',
-      '-webkit-transition-property': '-webkit-transform',
-      '-webkit-transition-timing-function': 'cubic-bezier(0.33,0.66,0.66,1)',
-      '-webkit-transition-duration': '0',
-      '-webkit-transform': 'translate3d(0, 0, 0)'
-    });
-    bar.append(indicator);
-    var barHeight = bar.height();
-    indicator.css('height', Math.max(Math.round(barHeight * barHeight / this.el.height()), 8));
-    this.bar = bar;
-    this.indicator = indicator;
+      bar.css({
+        'position': 'absolute',
+        'z-index': 100,
+        'width': 7,
+        'bottom': 2,
+        'top': 2,
+        'right': 1,
+        'pointer-events': 'none',
+        '-webkit-transition-property': 'opacity',
+        '-webkit-transition-duration': '350ms',
+        'overflow': 'hidden',
+        'opacity': '0',
+        'border-radius': '4px'
+      });
+      this.viewport.append(bar);
+      // Create the scrollbar indicator
+      var indicator = $('<div></div>');
+      indicator.css({
+        'position': 'absolute',
+        'z-index': 100,
+        'background-color': 'rgba(0,0,0,0.5)',
+        'border': '1px solid rgba(255,255,255,0.9)',
+        '-webkit-background-clip': 'padding-box',
+        'box-sizing': 'border-box',
+        'width': '100%',
+        'border-radius': '3px',
+        'pointer-events': 'none',
+        '-webkit-transition-property': '-webkit-transform',
+        '-webkit-transition-timing-function': 'cubic-bezier(0.33,0.66,0.66,1)',
+        '-webkit-transition-duration': '0',
+        '-webkit-transform': 'translate3d(0, 0, 0)'
+      });
+      bar.append(indicator);
+      var barHeight = bar.height();
+      indicator.css('height', Math.max(Math.round(barHeight * barHeight / this.el.height()), 8));
+      this.bar = bar;
+      this.indicator = indicator;
+    }
   };
 
   var isMoved = function (panel) {
@@ -151,6 +155,13 @@
       this.pageY = event.pageY;
       this._bound();
       this.direction = Math.abs(event.offsetX) > Math.abs(event.offsetY) ? 'h' : 'v';
+      if (this.direction === 'v') {
+        this.setScrollbar();
+      }
+      if (this.options.pullDownEl) {
+        this.pullDownEl = this.options.pullDownEl;
+        this.pullDownElHeight = this.pullDownEl.height();
+      }
       var that = this;
       this.el.bind(MOVE_EV, function (event) {
         that._move(event);
@@ -159,7 +170,6 @@
         that._end(event);
       });
     }
-    this.setScrollbar();
   };
 
   Panel.prototype._move = function (event) {
@@ -195,6 +205,22 @@
 
     // 更新位置
     this._pos(deltaX, deltaY);
+    if (this.options.pullDownEl) {
+      if (this.y > this.pullDownElHeight) {
+        if (!this.pullDownEl.hasClass('show')) {
+          this.pullDownEl.addClass('show');
+          this.options.pullDownAction && this.options.pullDownAction.call(this.pullDownEl, true);
+        }
+      } else {
+        if (this.pullDownEl.hasClass('show')) {
+          this.pullDownEl.removeClass('show');
+          this.options.pullDownAction && this.options.pullDownAction.call(this.pullDownEl, false);
+        }
+      }
+    }
+    if (this.options.onScrollMove) {
+      this.options.onScrollMove.call(this, event);
+    }
   };
 
   Panel.prototype._end = function (event) {
@@ -345,24 +371,64 @@
   };
 
   Panel.prototype.scrollbar = function (time) {
-    var y = - this.y / this.elHeight * this.viewportHeight;
-    this.indicator.anim({translate3d: '0, ' + y + 'px, 0'}, time, 'cubic-bezier(0.33,0.66,0.66,1)');
+    if (this.options.vScrollbar) {
+      var y = - this.y / this.elHeight * this.viewportHeight;
+      this.indicator.anim({translate3d: '0, ' + y + 'px, 0'}, time, 'cubic-bezier(0.33,0.66,0.66,1)');
+    }
   };
 
   Panel.prototype.setScrollbar = function () {
-    this.bar.css('-webkit-transition-delay', '0');
-    this.bar.css('opacity', '1');
+    if (this.options.vScrollbar) {
+      this.bar.css('-webkit-transition-delay', '0');
+      this.bar.css('opacity', '1');
+    }
   };
 
   Panel.prototype.resetScrollbar = function () {
-    this.bar.css('-webkit-transition-delay', '300ms');
-    this.bar.css('opacity', '0');
+    if (this.options.vScrollbar) {
+      this.bar.css('-webkit-transition-delay', '300ms');
+      this.bar.css('opacity', '0');
+    }
   };
 
-  Panel.prototype.refresh = function () {};
+  Panel.prototype.refresh = function () {
+    this._bound();
+    var bound = this.bound;
+    this.x = Math.max(Math.min(bound[1], this.x), bound[0]);
+    this.y = Math.max(Math.min(bound[3], this.y), bound[2]);
+    this.el.anim({translate3d: this.x + "px, " + this.y + "px, 0"}, 0.4, 'ease');
+  };
 
   Panel.prototype.scrollTo = function () {};
-  Panel.prototype.scrollToElement = function () {};
+
+  Panel.prototype.scrollToElement = function (el, time) {
+    var that = this;
+    if (!el) {
+      return;
+    }
+    this._bound();
+    el = $(el);
+
+    var elOffset = el.offset();
+    var scrollerOffset = this.el.offset();
+
+    var offsetX = scrollerOffset.left - elOffset.left;
+    var offsetY = scrollerOffset.top - elOffset.top;
+
+    var bound = this.bound;
+    var x = Math.max(Math.min(bound[1], offsetX), bound[0]);
+    var y = Math.max(Math.min(bound[3], offsetY), bound[2]);
+
+    time = time || 0.2;
+    this.el.anim({translate3d: x + "px, " + y + "px, 0"}, time, 'ease-in-out', function () {
+      that.animating = true;
+    });
+    this.x = x;
+    this.y = y;
+    if (this.options.onScrollEnd) {
+      this.options.onScrollEnd.call(this);
+    }
+  };
 
   Panel.prototype.scrollToPage = function (pageX, pageY, time) {
     var that = this;
