@@ -6,6 +6,13 @@
   var MOVE_EV = hasTouch ? 'pan' : 'mousemove';
   var END_EV = hasTouch ? 'panend' : 'mouseup';
 
+  var getBezier = function (a, b) {
+    return [
+      [(a / 3 + (a + b) / 3 - a) / (b - a), (a * a / 3 + a * b * 2 / 3 - a * a) / (b * b - a * a)],
+      [(b / 3 + (a + b) / 3 - a) / (b - a), (b * b / 3 + a * b * 2 / 3 - a * a) / (b * b - a * a)]
+    ];
+  };
+
   var Panel = function (el, options) {
     this.x = 0;
     this.y = 0;
@@ -20,7 +27,7 @@
       snap: false,
       vScroll: true,
       hScroll: true,
-      vScroller: false,
+      vScrollbar: false,
       // 如果为true，内容区域小于视窗区域时，不启用任何触屏效果
       auto: false,
       // 边界检查，设为true时，滑动不允许越出边界
@@ -209,12 +216,16 @@
       if (this.y > this.pullDownElHeight) {
         if (!this.pullDownEl.hasClass('show')) {
           this.pullDownEl.addClass('show');
-          this.options.pullDownAction && this.options.pullDownAction.call(this.pullDownEl, true);
+          if (this.options.pullDownAction) {
+            this.options.pullDownAction.call(this.pullDownEl, true);
+          }
         }
       } else {
         if (this.pullDownEl.hasClass('show')) {
           this.pullDownEl.removeClass('show');
-          this.options.pullDownAction && this.options.pullDownAction.call(this.pullDownEl, false);
+          if (this.options.pullDownAction) {
+            this.options.pullDownAction.call(this.pullDownEl, false);
+          }
         }
       }
     }
@@ -228,18 +239,25 @@
     this.status = 'free';
     var x = this.x;
     var y = this.y;
+    // 每次触摸完成，重新计算下边界
+    var bound = this.bound;
     var options = this.options;
-    var deceled, time;
+    var time = 200;
+    var timing = 'ease';
+    var callback = null;
     var speedX, speedY;
     if (event.duration < 300) {
       speedX = event.offsetX / event.duration;
+      speedX = Math.min(Math.max(speedX, -1.5), 1.5);
       speedY = event.offsetY / event.duration;
+      speedY = Math.min(Math.max(speedY, -1.5), 1.5);
       if (!this.options.vScroll) {
         speedY = 0;
       }
       if (!this.options.hScroll) {
         speedX = 0;
       }
+
       // 是否冒泡给父元素
       if (!this.options.vScroll && this.direction === 'v') {
         event.cancelBubble = false;
@@ -253,10 +271,11 @@
       }
 
       var speed = Math.sqrt(speedX * speedX + speedY * speedY);
+      speed = Math.min(Math.max(speed, -1.5), 1.5);
       // 减速度
-      var deceleration = 0.0015;
+      var deceleration = 0.0015 * (speed / Math.abs(speed));
       time = speed / deceleration;
-      var distance = Math.pow(time, 2) * deceleration / 2;
+      var distance = time * speed / 2;
       var distance2 = Math.pow(distance, 2);
 
       var distanceX, distanceY;
@@ -272,13 +291,32 @@
         distanceX = Math.sqrt(tan2 * distance2 / (tan2 + 1));
         distanceY = Math.sqrt(distance2 / (tan2 + 1));
       }
-      deceled  = speed !== 0;
+
       x += (speedX > 0 ? 1 : -1) * distanceX;
       y += (speedY > 0 ? 1 : -1) * distanceY;
+      if (y > bound[3] || y < bound[2]) {
+        var sign = y > 0 ? 1 : -1,
+          edge = y > 0 ? 0 : bound[2];
+
+        y = (y - edge) / 2 + edge;
+        time = (sign * Math.sqrt(2 * deceleration * (y - this.y) + speedY * speedY) - speedY) / deceleration;
+        timing = getBezier(-speedY / deceleration, -speedY / deceleration + time);
+        callback = function () {
+          speedY = speedY - deceleration * time;
+          deceleration = 0.0045 * (speedY / Math.abs(speedY));
+          time = -speedY / deceleration;
+          y = edge;
+
+          var timing = 'cubic-bezier(' + getBezier(-time, 0) + ')';
+          that.el.anim({translate3d: x + "px, " + y + "px, 0"}, time, timing, function () {
+            that.resetScrollbar();
+          });
+        };
+      } else {
+        timing = 'cubic-bezier(' + getBezier(-time, 0) + ')';
+      }
     }
 
-    // 每次触摸完成，重新计算下边界
-    var bound = this.bound;
     if (this.options.snap) {
       // 弹回边界
       if (options.snap === true) {
@@ -326,13 +364,11 @@
     this.x = x;
     this.y = y;
     this.direction = '';
-    this.animating = true;
-    time = !deceled ? 0.2 : 0.4;
-    this.el.anim({translate3d: x + "px, " + y + "px, 0"}, time, 'cubic-bezier(0.33,0.66,0.66,1)', function () {
-      that.animating = true;
+    time = (time / 1000).toFixed(2);
+    this.el.anim({translate3d: x + "px, " + y + "px, 0"}, time, timing, function () {
       that.resetScrollbar();
     });
-    that.scrollbar(0.2);
+    that.scrollbar(time, timing);
     if (that.options.onScrollEnd) {
       that.options.onScrollEnd.call(that);
     }
@@ -367,13 +403,13 @@
     this.el.anim({translate3d: x + "px, " + y + "px, 0"}, 0, 'ease');
     this.x = x;
     this.y = y;
-    this.scrollbar(0);
+    this.scrollbar(0, 'ease');
   };
 
-  Panel.prototype.scrollbar = function (time) {
+  Panel.prototype.scrollbar = function (time, timing) {
     if (this.options.vScrollbar) {
       var y = - this.y / this.elHeight * this.viewportHeight;
-      this.indicator.anim({translate3d: '0, ' + y + 'px, 0'}, time, 'cubic-bezier(0.33,0.66,0.66,1)');
+      this.indicator.anim({translate3d: '0, ' + y + 'px, 0'}, time, timing);
     }
   };
 
